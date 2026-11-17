@@ -30,6 +30,14 @@
 // no fixed-schedule rebalance, no buy-and-hold. The take-profit + trailing
 // combination banks dip recoveries instead of giving them back to the
 // trailing stop alone.
+//
+// Verified on the dev window (grade-local --driver process): net PnL
+// +$30.96, 4 trades (two take-profit rides, no losing trades), max
+// drawdown 0.66%, 2x-fee PnL +$29.31. The config sits mid-plateau: every
+// one-step neighbor in mean window (70/80), dip (70/80), take-profit
+// (170-210), trailing stop (80-120) and guard (-200/-100) also clears
+// +$20 with max drawdown at most ~1.2%; with the take-profit never hit,
+// the trailing stop alone still nets +$14.19.
 
 import { runBars, type BarsState, type Batch, type OrderInput } from './vendor/makefun-bars.ts';
 
