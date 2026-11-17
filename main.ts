@@ -16,6 +16,10 @@
 //   - HOLD with an 80 bps trailing stop from the highest close since entry;
 //     SELL the whole position when the close gives back >= 80 bps from it.
 //   - At most one position, at most one order per reply, long only.
+//   - Whether a position is held is read from the harness-reported
+//     positions on every batch, never assumed: if a buy is ever rejected
+//     (slippage, no bar), the bot simply re-decides on the next bar
+//     instead of tracking a phantom position.
 //   - Warm-up batches build history but never trade (orders on them would
 //     be rejected); the first tradable decision needs 300 prior closes.
 //
@@ -34,8 +38,7 @@ const MAX_SLIPPAGE_BPS = 300; // far above any 1-minute move + impact on this wi
 
 const closes: bigint[] = [];
 const prefix: bigint[] = [0n]; // prefix[i] = sum of closes[0..i-1]
-let holding = false;
-let peak = 0n; // highest close since entry
+let peak = 0n; // highest close since entry (set when a buy is decided)
 
 await runBars({
   onBatch(state: BarsState, batch: Batch): OrderInput[] {
@@ -48,25 +51,23 @@ await runBars({
     if (state.warmingUp) return [];
     if (k < MEAN_BARS) return []; // not enough history for the mean yet
     const mean = (prefix[k] - prefix[k - MEAN_BARS]) / BigInt(MEAN_BARS);
-    if (!holding) {
+    const heldQty = state.positions.get(SYMBOL)?.qty ?? 0n;
+    if (heldQty <= 0n) {
       const dip = ((mean - close) * 10_000n) / mean;
       const guard = (close * 10_000n) / closes[k - GUARD_BARS] - 10_000n;
       if (dip >= BigInt(DIP_BPS) && guard >= BigInt(GUARD_BPS)) {
         const cash = state.cash;
         if (cash < BigInt(state.hello.fees.min_notional_quote_units)) return [];
-        holding = true;
         peak = close;
         return [{ side: 'buy', symbol: SYMBOL, notional_quote_units: cash, max_slippage_bps: MAX_SLIPPAGE_BPS }];
       }
       return [];
     }
+    if (peak === 0n) peak = close; // defensive: a position with no recorded entry
     if (close > peak) peak = close;
     const giveback = ((peak - close) * 10_000n) / peak;
     if (giveback >= BigInt(TRAIL_BPS)) {
-      const qty = state.positions.get(SYMBOL)?.qty ?? 0n;
-      holding = false;
-      if (qty <= 0n) return [];
-      return [{ side: 'sell', symbol: SYMBOL, qty, max_slippage_bps: MAX_SLIPPAGE_BPS }];
+      return [{ side: 'sell', symbol: SYMBOL, qty: heldQty, max_slippage_bps: MAX_SLIPPAGE_BPS }];
     }
     return [];
   },
